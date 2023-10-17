@@ -1,10 +1,14 @@
-use std::{borrow::Cow, mem, slice};
-use wgpu::{util::DeviceExt, BufferUsages, VertexBufferLayout, COPY_BUFFER_ALIGNMENT};
+use std::borrow::Cow;
+use wgpu::COPY_BUFFER_ALIGNMENT;
 use winit::{
     event::{ElementState, Event, KeyboardInput, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     window::Window,
 };
+
+use crate::components::pentagon::Pentagon;
+
+mod components;
 
 #[repr(C)]
 #[derive(Clone, Debug)]
@@ -62,32 +66,8 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("shader.wgsl"))),
     });
 
-    let vertex_buffers = [VertexBufferLayout {
-        array_stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
-        step_mode: wgpu::VertexStepMode::Vertex,
-        attributes: &[
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x2,
-                offset: 0,
-                shader_location: 0,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x3,
-                offset: mem::size_of::<[f32; 2]>() as wgpu::BufferAddress,
-                shader_location: 1,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32,
-                offset: mem::size_of::<[f32; 5]>() as wgpu::BufferAddress,
-                shader_location: 2,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x2,
-                offset: mem::size_of::<[f32; 6]>() as wgpu::BufferAddress,
-                shader_location: 3,
-            },
-        ],
-    }];
+    let swapchain_capabilities = surface.get_capabilities(&adapter);
+    let swapchain_format = swapchain_capabilities.formats[0];
 
     let texture_size = wgpu::Extent3d {
         width: diffuse_image.width(),
@@ -106,16 +86,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         view_formats: &[],
     });
 
-    let diffuse_texture_view = diffuse_texture.create_view(&wgpu::TextureViewDescriptor::default());
-    let diffuse_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-        address_mode_u: wgpu::AddressMode::ClampToEdge,
-        address_mode_v: wgpu::AddressMode::ClampToEdge,
-        address_mode_w: wgpu::AddressMode::ClampToEdge,
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Nearest,
-        mipmap_filter: wgpu::FilterMode::Nearest,
-        ..Default::default()
-    });
+    let pentagon_model = Pentagon::new(&device, &shader, &swapchain_format, &diffuse_texture);
 
     let texture_bind_group_layout =
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -142,51 +113,10 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             label: Some("texture_bind_group_layout"),
         });
 
-    let diffuse_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        layout: &texture_bind_group_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&diffuse_texture_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(&diffuse_sampler),
-            },
-        ],
-        label: Some("diffuse_bind_group"),
-    });
-
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: None,
         bind_group_layouts: &[&texture_bind_group_layout],
         push_constant_ranges: &[],
-    });
-
-    let swapchain_capabilities = surface.get_capabilities(&adapter);
-    let swapchain_format = swapchain_capabilities.formats[0];
-
-    let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: None,
-        layout: Some(&pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: "vs_main",
-            buffers: &vertex_buffers,
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: "fs_main",
-            targets: &[Some(swapchain_format.into())],
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            cull_mode: Some(wgpu::Face::Back),
-            ..Default::default()
-        },
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState::default(),
-        multiview: None,
     });
 
     let mut config = wgpu::SurfaceConfiguration {
@@ -201,129 +131,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
     surface.configure(&device, &config);
 
-    let pentagon = [
-        Vertex {
-            pos: [-0.0868241, 0.49240386],
-            color: [0.5028864580325687, 0.0, 0.5028864580325687],
-            has_texture: [1.0],
-            tex_coords: [0.4131759, 0.00759614],
-        }, // A
-        Vertex {
-            pos: [-0.49513406, 0.06958647],
-            color: [0.5028864580325687, 0.0, 0.5028864580325687],
-            has_texture: [1.0],
-            tex_coords: [0.0048659444, 0.43041354],
-        }, // B
-        Vertex {
-            pos: [-0.21918549, -0.44939706],
-            color: [0.5028864580325687, 0.0, 0.5028864580325687],
-            has_texture: [1.0],
-            tex_coords: [0.28081453, 0.949397],
-        }, // C
-        Vertex {
-            pos: [0.35966998, -0.3473291],
-            color: [0.5028864580325687, 0.0, 0.5028864580325687],
-            has_texture: [1.0],
-            tex_coords: [0.85967, 0.84732914],
-        }, // D
-        Vertex {
-            pos: [0.44147372, 0.2347359],
-            color: [0.5028864580325687, 0.0, 0.5028864580325687],
-            has_texture: [1.0],
-            tex_coords: [0.9414737, 0.2652641],
-        }, // E
-    ]
-    .to_vec();
-
-    let triangle = [
-        Vertex {
-            pos: [-1.0, -1.0],
-            color: [1.0, 0.0, 0.0],
-            has_texture: [1.0],
-            tex_coords: [0.0, 1.0],
-        },
-        Vertex {
-            pos: [-0.5, -0.5],
-            color: [0.0, 1.0, 0.0],
-            has_texture: [1.0],
-            tex_coords: [0.0, 1.0],
-        },
-        Vertex {
-            pos: [-1.0, 0.0],
-            color: [0.0, 0.0, 1.0],
-            has_texture: [1.0],
-            tex_coords: [0.0, 1.0],
-        },
-    ]
-    .to_vec();
-
-    let vertices_raw = unsafe {
-        slice::from_raw_parts(
-            pentagon.as_ptr() as *const u8,
-            mem::size_of::<Vertex>() * pentagon.len(),
-        )
-    };
-
-    let traingle_vertices_raw = unsafe {
-        slice::from_raw_parts(
-            triangle.as_slice() as *const _ as *const u8,
-            mem::size_of::<Vertex>() * triangle.len(),
-        )
-    };
-
-    let vertex_buffer_size = next_copy_buffer_size(4096);
-    let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("Test vertex non initialized buffer"),
-        usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-        size: vertex_buffer_size,
-    });
-
-    let vertex_buffer2 = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("Test triangle vertex buffer"),
-        usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-        size: vertex_buffer_size,
-    });
-
-    let indices = [0, 1, 4, 1, 2, 4, 2, 3, 4].to_vec();
-
-    let triangle_indices = [0, 1, 2].to_vec();
-
-    let indices_raw = unsafe {
-        slice::from_raw_parts(
-            indices.as_slice() as *const _ as *const u8,
-            mem::size_of::<Vertex>() * indices.len(),
-        )
-    };
-
-    let triangle_indices_raw = unsafe {
-        slice::from_raw_parts(
-            triangle_indices.as_slice() as *const _ as *const u8,
-            mem::size_of::<Vertex>() * triangle_indices.len(),
-        )
-    };
-
-    let index_buffer_size = next_copy_buffer_size(4096);
-    let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("Test indices non initialize buffer"),
-        usage: BufferUsages::INDEX | BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-        size: index_buffer_size,
-    });
-
-    let index_buffer2 = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("Test indices buffer2"),
-        usage: BufferUsages::INDEX | BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-        size: index_buffer_size,
-    });
-
-    queue.write_buffer(&vertex_buffer, 0, vertices_raw);
-    queue.write_buffer(&index_buffer, 0, indices_raw);
-
-    // queue.write_buffer(&vertex_buffer2, 0, traingle_vertices_raw);
-    // queue.write_buffer(&index_buffer2, 0, triangle_indices_raw);
+    pentagon_model.prepare(&queue);
 
     queue.write_texture(
         wgpu::ImageCopyTexture {
@@ -340,11 +148,6 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         },
         texture_size,
     );
-    // let index_buffer_init = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-    //     label: Some("Test index buffer"),
-    //     contents: INDICES,
-    //     usage: BufferUsages::INDEX,
-    // });
 
     event_loop.run(move |event, _, control_flow| {
         // Have the closure take ownership of the resources.
@@ -387,31 +190,8 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                         })],
                         depth_stencil_attachment: None,
                     });
-                    rpass.set_pipeline(&render_pipeline);
-                    rpass.set_bind_group(0, &diffuse_bind_group, &[]);
-                    rpass.set_vertex_buffer(0, vertex_buffer.slice(..));
-                    rpass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                    rpass.draw_indexed(0..indices.len() as u32, 0, 0..1);
+                    pentagon_model.render(&mut rpass);
                 }
-
-                // {
-                //     let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                //         label: None,
-                //         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                //             view: &view,
-                //             resolve_target: None,
-                //             ops: wgpu::Operations {
-                //                 load: wgpu::LoadOp::Load,
-                //                 store: true,
-                //             },
-                //         })],
-                //         depth_stencil_attachment: None,
-                //     });
-                //     rpass.set_pipeline(&render_pipeline);
-                //     rpass.set_vertex_buffer(0, vertex_buffer2.slice(..));
-                //     rpass.set_index_buffer(index_buffer2.slice(..), wgpu::IndexFormat::Uint32);
-                //     rpass.draw_indexed(0..triangle_indices.len() as u32, 0, 0..1);
-                // }
 
                 queue.submit(Some(encoder.finish()));
                 frame.present();
