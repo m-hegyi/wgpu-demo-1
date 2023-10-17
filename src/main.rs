@@ -1,5 +1,6 @@
-use std::borrow::Cow;
-use wgpu::COPY_BUFFER_ALIGNMENT;
+use cgmath::SquareMatrix;
+use std::{borrow::Cow, mem, slice};
+use wgpu::{util::DeviceExt, COPY_BUFFER_ALIGNMENT};
 use winit::{
     event::{ElementState, Event, KeyboardInput, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
@@ -10,6 +11,55 @@ use crate::components::pentagon::Pentagon;
 
 mod components;
 
+#[rustfmt::skip]
+pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
+    1.0, 0.0, 0.0, 0.0,
+    0.0, 1.0, 0.0, 0.0,
+    0.0, 0.0, 0.5, 0.5,
+    0.0, 0.0, 0.0, 1.0,
+);
+
+pub struct Camera {
+    eye: cgmath::Point3<f32>,
+    target: cgmath::Point3<f32>,
+    up: cgmath::Vector3<f32>,
+    aspect: f32,
+    fovy: f32,
+    znear: f32,
+    zfar: f32,
+}
+
+impl Camera {
+    fn build_view_projection_matrix(&self) -> cgmath::Matrix4<f32> {
+        // 1.
+        let view = cgmath::Matrix4::look_at_rh(self.eye, self.target, self.up);
+        // 2.
+        let proj = cgmath::perspective(cgmath::Deg(self.fovy), self.aspect, self.znear, self.zfar);
+
+        // 3.
+        return OPENGL_TO_WGPU_MATRIX * proj * view;
+    }
+
+    fn update_aspect(&mut self, aspect: f32) {
+        self.aspect = aspect;
+    }
+}
+
+impl Default for Camera {
+    fn default() -> Self {
+        Camera {
+            eye: (0.0, 1.0, 2.0).into(),
+            target: (0.0, 0.0, 0.0).into(),
+            up: cgmath::Vector3::unit_y(),
+            aspect: 4.0 as f32 / 3.0 as f32,
+            fovy: 45.0,
+            znear: 0.1,
+            zfar: 100.0,
+        }
+    }
+}
+
+// TODO: Move this to somewhere else
 #[repr(C)]
 #[derive(Clone, Debug)]
 struct Vertex {
@@ -17,6 +67,23 @@ struct Vertex {
     color: [f32; 3],
     has_texture: [f32; 1],
     tex_coords: [f32; 2],
+}
+
+#[repr(C)]
+struct CameraUniform {
+    view_proj: [[f32; 4]; 4],
+}
+
+impl CameraUniform {
+    fn new() -> Self {
+        CameraUniform {
+            view_proj: cgmath::Matrix4::identity().into(),
+        }
+    }
+
+    fn update_view_proj(&mut self, camera: &Camera) {
+        self.view_proj = camera.build_view_projection_matrix().into();
+    }
 }
 
 async fn run(event_loop: EventLoop<()>, window: Window) {
@@ -86,7 +153,15 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         view_formats: &[],
     });
 
-    let pentagon_model = Pentagon::new(&device, &shader, &swapchain_format, &diffuse_texture);
+    let mut camera = Camera::default();
+
+    let mut pentagon_model = Pentagon::new(
+        &device,
+        &shader,
+        &swapchain_format,
+        &diffuse_texture,
+        &camera,
+    );
 
     let texture_bind_group_layout =
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -131,7 +206,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
     surface.configure(&device, &config);
 
-    pentagon_model.prepare(&queue);
+    pentagon_model.prepare(&queue, None);
 
     queue.write_texture(
         wgpu::ImageCopyTexture {
@@ -165,10 +240,12 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 config.width = size.width;
                 config.height = size.height;
                 surface.configure(&device, &config);
+                camera.update_aspect(size.width as f32 / size.height as f32);
                 // On macos the window needs to be redrawn manually after resizing
                 window.request_redraw();
             }
             Event::RedrawRequested(_) => {
+                pentagon_model.prepare(&queue, Some(&camera));
                 let frame = surface
                     .get_current_texture()
                     .expect("Failed to acquire next swap chain texture");

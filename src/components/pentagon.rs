@@ -1,8 +1,10 @@
 use std::{mem, slice};
 use wgpu::{
-    BindGroup, Buffer, ColorTargetState, Device, Queue, RenderPass, RenderPipeline, ShaderModule,
-    Texture, TextureFormat,
+    util::DeviceExt, BindGroup, Buffer, ColorTargetState, Device, Queue, RenderPass,
+    RenderPipeline, ShaderModule, Texture, TextureFormat,
 };
+
+use crate::{Camera, CameraUniform};
 
 #[repr(C)]
 #[derive(Clone, Debug)]
@@ -12,12 +14,15 @@ struct Vertex {
 }
 
 pub struct Pentagon {
+    camera_uniform: CameraUniform,
     vertices: Vec<Vertex>,
     indices: Vec<i32>,
     render_pipeline: RenderPipeline,
     vertex_buffer: Buffer,
     index_buffer: Buffer,
     diffuse_bind_group: BindGroup,
+    camera_buffer: Buffer,
+    camera_bind_group: BindGroup,
 }
 
 impl Pentagon {
@@ -26,6 +31,7 @@ impl Pentagon {
         shader: &ShaderModule,
         swapchain_format: &TextureFormat,
         diffuse_texture: &Texture,
+        camera: &Camera,
     ) -> Self {
         let texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -69,9 +75,28 @@ impl Pentagon {
             ],
         }];
 
+        let mut camera_uniform = CameraUniform::new();
+
+        camera_uniform.update_view_proj(&camera);
+
+        let camera_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+                label: Some("camera_bind_group_layout"),
+            });
+
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
-            bind_group_layouts: &[&texture_bind_group_layout],
+            bind_group_layouts: &[&texture_bind_group_layout, &camera_bind_group_layout],
             push_constant_ranges: &[],
         });
 
@@ -169,19 +194,45 @@ impl Pentagon {
             label: Some("diffuse_bind_group"),
         });
 
+        // TODO: it can be a serious issue
+        let camera_raw = unsafe {
+            slice::from_raw_parts(
+                camera_uniform.view_proj.as_ptr() as *const u8,
+                mem::size_of::<CameraUniform>(),
+            )
+        };
+
+        let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Camera buffer"),
+            contents: camera_raw,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &camera_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
+            }],
+            label: Some("camera_bind_group"),
+        });
+
         // write queue
 
         Pentagon {
+            camera_uniform,
             vertices,
             indices,
             render_pipeline,
             vertex_buffer,
             index_buffer,
             diffuse_bind_group,
+            camera_bind_group,
+            camera_buffer,
         }
     }
 
-    pub fn prepare(&self, queue: &Queue) {
+    pub fn prepare(&mut self, queue: &Queue, camera: Option<&Camera>) {
         let vertices_raw = unsafe {
             slice::from_raw_parts(
                 self.vertices.as_ptr() as *const u8,
@@ -196,6 +247,22 @@ impl Pentagon {
             )
         };
 
+        match camera {
+            Some(camera) => {
+                &self.camera_uniform.update_view_proj(camera);
+
+                let camera_raw = unsafe {
+                    slice::from_raw_parts(
+                        self.camera_uniform.view_proj.as_ptr() as *const u8,
+                        mem::size_of::<CameraUniform>(),
+                    )
+                };
+
+                queue.write_buffer(&self.camera_buffer, 0, camera_raw);
+            }
+            _ => {}
+        }
+
         queue.write_buffer(&self.vertex_buffer, 0, vertices_raw);
         queue.write_buffer(&self.index_buffer, 0, indices_raw);
     }
@@ -203,6 +270,9 @@ impl Pentagon {
     pub fn render<'rpass>(&'rpass self, render_pass: &mut RenderPass<'rpass>) {
         render_pass.set_pipeline(&self.render_pipeline);
         render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
+
+        render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
+
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
         render_pass.draw_indexed(0..self.indices.len() as u32, 0, 0..1);
