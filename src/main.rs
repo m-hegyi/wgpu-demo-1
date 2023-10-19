@@ -1,6 +1,6 @@
 use cgmath::SquareMatrix;
-use std::{borrow::Cow, mem, slice};
-use wgpu::{util::DeviceExt, COPY_BUFFER_ALIGNMENT};
+use std::{borrow::Cow, time::SystemTime};
+use wgpu::COPY_BUFFER_ALIGNMENT;
 use winit::{
     event::{ElementState, Event, KeyboardInput, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
@@ -206,7 +206,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
     surface.configure(&device, &config);
 
-    pentagon_model.prepare(&queue, None);
+    pentagon_model.prepare(&queue, None, 0.0);
 
     queue.write_texture(
         wgpu::ImageCopyTexture {
@@ -223,6 +223,8 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         },
         texture_size,
     );
+
+    let now = SystemTime::now();
 
     event_loop.run(move |event, _, control_flow| {
         // Have the closure take ownership of the resources.
@@ -245,7 +247,9 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 window.request_redraw();
             }
             Event::RedrawRequested(_) => {
-                pentagon_model.prepare(&queue, Some(&camera));
+                let elapsed_time: f32 = now.elapsed().unwrap().as_secs_f32();
+
+                pentagon_model.prepare(&queue, Some(&camera), elapsed_time);
                 let frame = surface
                     .get_current_texture()
                     .expect("Failed to acquire next swap chain texture");
@@ -269,6 +273,8 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                     });
                     pentagon_model.render(&mut rpass);
                 }
+
+                println!("{:?}", now.elapsed().unwrap().as_millis());
 
                 queue.submit(Some(encoder.finish()));
                 frame.present();

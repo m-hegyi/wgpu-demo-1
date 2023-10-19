@@ -4,6 +4,9 @@ struct CameraUniform {
 @group(1) @binding(0)
 var<uniform> camera: CameraUniform;
 
+@group(2) @binding(0)
+var<uniform> elapsed_time: f32;
+
 struct VertexInput {
     @location(0) pos: vec2<f32>,
     @location(1) tex_coords: vec2<f32>,
@@ -18,7 +21,7 @@ struct VertexOutput {
 fn vs_main(model: VertexInput) -> VertexOutput {
     var out: VertexOutput;
     out.tex_coords = model.tex_coords;
-    out.clip_position = camera.view_proj * vec4<f32>(model.pos, 0.0, 1.0);
+    out.clip_position = camera.view_proj * vec4<f32>(model.pos, 0.0, 1.0) + elapsed_time;
     return out;
 }
 

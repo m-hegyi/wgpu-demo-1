@@ -23,6 +23,8 @@ pub struct Pentagon {
     diffuse_bind_group: BindGroup,
     camera_buffer: Buffer,
     camera_bind_group: BindGroup,
+    elapsed_time_buffer: Buffer,
+    elapsed_time_bind_group: BindGroup,
 }
 
 impl Pentagon {
@@ -94,9 +96,28 @@ impl Pentagon {
                 label: Some("camera_bind_group_layout"),
             });
 
+        let elapsed_time_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+                label: Some("elapsed_time_bind_group_layout"),
+            });
+
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
-            bind_group_layouts: &[&texture_bind_group_layout, &camera_bind_group_layout],
+            bind_group_layouts: &[
+                &texture_bind_group_layout,
+                &camera_bind_group_layout,
+                &elapsed_time_bind_group_layout,
+            ],
             push_constant_ranges: &[],
         });
 
@@ -217,6 +238,23 @@ impl Pentagon {
             label: Some("camera_bind_group"),
         });
 
+        let start_time: [u8; 4] = [0, 0, 0, 0];
+
+        let elapsed_time_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Elapsed time buffer"),
+            contents: &start_time,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let elapsed_time_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &elapsed_time_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: elapsed_time_buffer.as_entire_binding(),
+            }],
+            label: Some("Elapsed time bind group"),
+        });
+
         // write queue
 
         Pentagon {
@@ -229,10 +267,12 @@ impl Pentagon {
             diffuse_bind_group,
             camera_bind_group,
             camera_buffer,
+            elapsed_time_buffer,
+            elapsed_time_bind_group,
         }
     }
 
-    pub fn prepare(&mut self, queue: &Queue, camera: Option<&Camera>) {
+    pub fn prepare(&mut self, queue: &Queue, camera: Option<&Camera>, elapsed_time: f32) {
         let vertices_raw = unsafe {
             slice::from_raw_parts(
                 self.vertices.as_ptr() as *const u8,
@@ -249,7 +289,7 @@ impl Pentagon {
 
         match camera {
             Some(camera) => {
-                &self.camera_uniform.update_view_proj(camera);
+                let _ = &self.camera_uniform.update_view_proj(camera);
 
                 let camera_raw = unsafe {
                     slice::from_raw_parts(
@@ -263,6 +303,9 @@ impl Pentagon {
             _ => {}
         }
 
+        // TODO: elapsed writing
+        queue.write_buffer(&self.elapsed_time_buffer, 0, &elapsed_time.to_ne_bytes());
+
         queue.write_buffer(&self.vertex_buffer, 0, vertices_raw);
         queue.write_buffer(&self.index_buffer, 0, indices_raw);
     }
@@ -272,6 +315,8 @@ impl Pentagon {
         render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
 
         render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
+
+        render_pass.set_bind_group(2, &self.elapsed_time_bind_group, &[]);
 
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
