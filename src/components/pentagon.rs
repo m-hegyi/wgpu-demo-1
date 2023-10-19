@@ -9,8 +9,30 @@ use crate::{Camera, CameraUniform};
 #[repr(C)]
 #[derive(Clone, Debug)]
 struct Vertex {
-    pos: [f32; 2],
+    pos: [f32; 3],
     tex_coords: [f32; 2],
+}
+
+#[repr(C)]
+#[derive(Clone)]
+struct Instance {
+    position: cgmath::Vector3<f32>,
+    rotation: cgmath::Quaternion<f32>,
+}
+
+#[repr(C)]
+struct InstanceRaw {
+    model: [[f32; 4]; 4],
+}
+
+impl Instance {
+    fn to_raw(&self) -> InstanceRaw {
+        InstanceRaw {
+            model: (cgmath::Matrix4::from_translation(self.position)
+                * cgmath::Matrix4::from(self.rotation))
+            .into(),
+        }
+    }
 }
 
 pub struct Pentagon {
@@ -25,6 +47,8 @@ pub struct Pentagon {
     camera_bind_group: BindGroup,
     elapsed_time_buffer: Buffer,
     elapsed_time_bind_group: BindGroup,
+    instance_buffer: Buffer,
+    instances: Vec<Instance>,
 }
 
 impl Pentagon {
@@ -60,26 +84,56 @@ impl Pentagon {
                 label: Some("texture_bind_group_layout"),
             });
 
-        let vertex_buffers = [wgpu::VertexBufferLayout {
-            array_stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x2,
-                    offset: 0,
-                    shader_location: 0,
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x2,
-                    offset: mem::size_of::<[f32; 2]>() as wgpu::BufferAddress,
-                    shader_location: 1,
-                },
-            ],
-        }];
+        let vertex_buffers = [
+            wgpu::VertexBufferLayout {
+                array_stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &[
+                    wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32x3,
+                        offset: 0,
+                        shader_location: 0,
+                    },
+                    wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32x2,
+                        offset: mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                        shader_location: 1,
+                    },
+                ],
+            },
+            wgpu::VertexBufferLayout {
+                array_stride: mem::size_of::<InstanceRaw>() as wgpu::BufferAddress,
+                step_mode: wgpu::VertexStepMode::Instance,
+                attributes: &[
+                    wgpu::VertexAttribute {
+                        offset: 0,
+                        shader_location: 5,
+                        format: wgpu::VertexFormat::Float32x4,
+                    },
+                    wgpu::VertexAttribute {
+                        offset: mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
+                        shader_location: 6,
+                        format: wgpu::VertexFormat::Float32x4,
+                    },
+                    wgpu::VertexAttribute {
+                        offset: mem::size_of::<[f32; 8]>() as wgpu::BufferAddress,
+                        shader_location: 7,
+                        format: wgpu::VertexFormat::Float32x4,
+                    },
+                    wgpu::VertexAttribute {
+                        offset: mem::size_of::<[f32; 12]>() as wgpu::BufferAddress,
+                        shader_location: 8,
+                        format: wgpu::VertexFormat::Float32x4,
+                    },
+                ],
+            },
+        ];
 
         let mut camera_uniform = CameraUniform::new();
 
         camera_uniform.update_view_proj(&camera);
+
+        let instances = Pentagon::create_instances(10);
 
         let camera_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -148,23 +202,23 @@ impl Pentagon {
 
         let vertices = [
             Vertex {
-                pos: [-0.0868241, 0.49240386],
+                pos: [-0.0868241, 0.49240386, 0.0],
                 tex_coords: [0.4131759, 0.00759614],
             }, // A
             Vertex {
-                pos: [-0.49513406, 0.06958647],
+                pos: [-0.49513406, 0.06958647, 0.0],
                 tex_coords: [0.0048659444, 0.43041354],
             }, // B
             Vertex {
-                pos: [-0.21918549, -0.44939706],
+                pos: [-0.21918549, -0.44939706, 0.0],
                 tex_coords: [0.28081453, 0.949397],
             }, // C
             Vertex {
-                pos: [0.35966998, -0.3473291],
+                pos: [0.35966998, -0.3473291, 0.0],
                 tex_coords: [0.85967, 0.84732914],
             }, // D
             Vertex {
-                pos: [0.44147372, 0.2347359],
+                pos: [0.44147372, 0.2347359, 0.0],
                 tex_coords: [0.9414737, 0.2652641],
             }, // E
         ]
@@ -255,6 +309,21 @@ impl Pentagon {
             label: Some("Elapsed time bind group"),
         });
 
+        let instance_raw = instances.iter().map(Instance::to_raw).collect::<Vec<_>>();
+
+        let instance_raw = unsafe {
+            slice::from_raw_parts(
+                instance_raw.as_ptr() as *const u8,
+                mem::size_of::<InstanceRaw>() * instance_raw.len(),
+            )
+        };
+
+        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Insatnce buffer"),
+            contents: instance_raw,
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
         // write queue
 
         Pentagon {
@@ -269,6 +338,8 @@ impl Pentagon {
             camera_buffer,
             elapsed_time_buffer,
             elapsed_time_bind_group,
+            instances,
+            instance_buffer,
         }
     }
 
@@ -319,7 +390,49 @@ impl Pentagon {
         render_pass.set_bind_group(2, &self.elapsed_time_bind_group, &[]);
 
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+        render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
         render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-        render_pass.draw_indexed(0..self.indices.len() as u32, 0, 0..1);
+        render_pass.draw_indexed(
+            0..self.indices.len() as u32,
+            0,
+            0..self.instances.len() as _,
+        );
+    }
+
+    fn create_instances(num_row_instances: usize) -> Vec<Instance> {
+        use cgmath::prelude::*;
+
+        const NUM_INSTANCES_PER_ROW: u32 = 10;
+
+        const INSTANCE_DISPLACEMENT: cgmath::Vector3<f32> = cgmath::Vector3::new(
+            NUM_INSTANCES_PER_ROW as f32 * 0.5,
+            0.0,
+            NUM_INSTANCES_PER_ROW as f32 * 0.5,
+        );
+
+        (0..num_row_instances)
+            .flat_map(|z| {
+                (0..NUM_INSTANCES_PER_ROW).map(move |x| {
+                    let position = cgmath::Vector3 {
+                        x: x as f32,
+                        y: 0.0,
+                        z: z as f32,
+                    } - INSTANCE_DISPLACEMENT;
+
+                    let rotation = if position.is_zero() {
+                        // this is needed so an object at (0, 0, 0) won't get scaled to zero
+                        // as Quaternions can effect scale if they're not created correctly
+                        cgmath::Quaternion::from_axis_angle(
+                            cgmath::Vector3::unit_z(),
+                            cgmath::Deg(0.0),
+                        )
+                    } else {
+                        cgmath::Quaternion::from_axis_angle(position.normalize(), cgmath::Deg(45.0))
+                    };
+
+                    Instance { position, rotation }
+                })
+            })
+            .collect()
     }
 }

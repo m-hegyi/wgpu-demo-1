@@ -8,8 +8,15 @@ var<uniform> camera: CameraUniform;
 var<uniform> elapsed_time: f32;
 
 struct VertexInput {
-    @location(0) pos: vec2<f32>,
+    @location(0) pos: vec3<f32>,
     @location(1) tex_coords: vec2<f32>,
+};
+
+struct InstanceInput {
+    @location(5) model_matrix_0: vec4<f32>,
+    @location(6) model_matrix_1: vec4<f32>,
+    @location(7) model_matrix_2: vec4<f32>,
+    @location(8) model_matrix_3: vec4<f32>,
 };
 
 struct VertexOutput {
@@ -18,10 +25,18 @@ struct VertexOutput {
 }
 
 @vertex
-fn vs_main(model: VertexInput) -> VertexOutput {
+fn vs_main(model: VertexInput, instance: InstanceInput) -> VertexOutput {
     var out: VertexOutput;
+
+    var model_matrix = mat4x4<f32>(
+        instance.model_matrix_0 * elapsed_time,
+        instance.model_matrix_1 * elapsed_time,
+        instance.model_matrix_2 * elapsed_time,
+        instance.model_matrix_3 * elapsed_time,
+    );
+
     out.tex_coords = model.tex_coords;
-    out.clip_position = camera.view_proj * vec4<f32>(model.pos, 0.0, 1.0) + elapsed_time;
+    out.clip_position = camera.view_proj * model_matrix * vec4<f32>(model.pos, 1.0) + vec4<f32>(sin(elapsed_time % 1000.0), 0.0, 0.0, 0.0);
     return out;
 }
 
