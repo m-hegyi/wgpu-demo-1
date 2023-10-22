@@ -7,9 +7,10 @@ use winit::{
     window::Window,
 };
 
-use crate::components::pentagon::Pentagon;
+use crate::{components::pentagon::Pentagon, core::texture::Texture};
 
 mod components;
+mod core;
 
 #[rustfmt::skip]
 pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
@@ -158,35 +159,6 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         view_formats: &[],
     });
 
-    let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("Depth texture"),
-        size: wgpu::Extent3d {
-            width: size.width,
-            height: size.height,
-            ..Default::default()
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Depth32Float,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-        view_formats: &[],
-    });
-
-    let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
-    // let depth_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-    //     address_mode_u: wgpu::AddressMode::ClampToEdge,
-    //     address_mode_v: wgpu::AddressMode::ClampToEdge,
-    //     address_mode_w: wgpu::AddressMode::ClampToEdge,
-    //     mag_filter: wgpu::FilterMode::Linear,
-    //     min_filter: wgpu::FilterMode::Linear,
-    //     mipmap_filter: wgpu::FilterMode::Nearest,
-    //     compare: Some(wgpu::CompareFunction::LessEqual), // 5.
-    //     lod_min_clamp: 0.0,
-    //     lod_max_clamp: 100.0,
-    //     ..Default::default()
-    // });
-
     let mut camera = Camera::default();
 
     let mut pentagon_model = Pentagon::new(
@@ -238,6 +210,9 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         view_formats: vec![],
     };
 
+    let mut depth_texture: Texture =
+        Texture::create_depth_texture(&device, &config, "Depth Texture");
+
     surface.configure(&device, &config);
 
     pentagon_model.prepare(&queue, None, 0.0);
@@ -276,6 +251,13 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 config.width = size.width;
                 config.height = size.height;
                 surface.configure(&device, &config);
+
+                depth_texture.recreate_texture(Texture::create_depth_texture(
+                    &device,
+                    &config,
+                    "Depth texture",
+                ));
+
                 camera.update_aspect(size.width as f32 / size.height as f32);
                 // On macos the window needs to be redrawn manually after resizing
                 window.request_redraw();
@@ -304,7 +286,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                             },
                         })],
                         depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                            view: &depth_view,
+                            view: depth_texture.get_view(),
                             depth_ops: Some(wgpu::Operations {
                                 load: wgpu::LoadOp::Clear(1.0),
                                 store: true,
