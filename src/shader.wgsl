@@ -29,14 +29,15 @@ fn vs_main(model: VertexInput, instance: InstanceInput) -> VertexOutput {
     var out: VertexOutput;
 
     var model_matrix = mat4x4<f32>(
-        instance.model_matrix_0 * elapsed_time,
-        instance.model_matrix_1 * elapsed_time,
-        instance.model_matrix_2 * elapsed_time,
-        instance.model_matrix_3 * elapsed_time,
+        instance.model_matrix_0,
+        instance.model_matrix_1,
+        instance.model_matrix_2,
+        instance.model_matrix_3,
     );
 
     out.tex_coords = model.tex_coords;
-    out.clip_position = camera.view_proj * model_matrix * vec4<f32>(model.pos, 1.0) + vec4<f32>(sin(elapsed_time % 1000.0), 0.0, 0.0, 0.0);
+    out.clip_position = camera.view_proj * model_matrix * vec4<f32>(model.pos, 1.0);
+    //  + vec4<f32>(sin(elapsed_time % 1000.0), 0.0, 0.0, 0.0);
     return out;
 }
 

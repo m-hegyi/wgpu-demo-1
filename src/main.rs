@@ -2,7 +2,7 @@ use cgmath::SquareMatrix;
 use std::{borrow::Cow, time::SystemTime};
 use wgpu::COPY_BUFFER_ALIGNMENT;
 use winit::{
-    event::{ElementState, Event, KeyboardInput, WindowEvent},
+    event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     window::Window,
 };
@@ -43,12 +43,17 @@ impl Camera {
     fn update_aspect(&mut self, aspect: f32) {
         self.aspect = aspect;
     }
+
+    // TODO: replace it with a more complex control
+    fn update_eye(&mut self, new_eye_pos: cgmath::Point3<f32>) {
+        self.eye = new_eye_pos;
+    }
 }
 
 impl Default for Camera {
     fn default() -> Self {
         Camera {
-            eye: (0.0, 1.0, 2.0).into(),
+            eye: (0.0, 1.3, 6.0).into(),
             target: (0.0, 0.0, 0.0).into(),
             up: cgmath::Vector3::unit_y(),
             aspect: 4.0 as f32 / 3.0 as f32,
@@ -274,8 +279,6 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                     pentagon_model.render(&mut rpass);
                 }
 
-                println!("{:?}", now.elapsed().unwrap().as_millis());
-
                 queue.submit(Some(encoder.finish()));
                 frame.present();
             }
@@ -292,6 +295,35 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                     },
                 ..
             } => *control_flow = ControlFlow::Exit,
+
+            Event::WindowEvent {
+                event:
+                    WindowEvent::KeyboardInput {
+                        input:
+                            KeyboardInput {
+                                state: ElementState::Pressed,
+                                virtual_keycode,
+                                ..
+                            },
+                        ..
+                    },
+                ..
+            } => match virtual_keycode {
+                Some(VirtualKeyCode::Left) => {
+                    camera.update_eye((camera.eye.x + (-0.1), camera.eye.y, camera.eye.z).into());
+                }
+                Some(VirtualKeyCode::Right) => {
+                    camera.update_eye((camera.eye.x + (0.1), camera.eye.y, camera.eye.z).into());
+                }
+                Some(VirtualKeyCode::Up) => {
+                    camera.update_eye((camera.eye.x, camera.eye.y, camera.eye.z + (-0.02)).into());
+                }
+                Some(VirtualKeyCode::Down) => {
+                    camera.update_eye((camera.eye.x, camera.eye.y, camera.eye.z + (0.02)).into());
+                }
+
+                _ => {}
+            },
 
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
