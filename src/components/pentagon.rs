@@ -1,17 +1,16 @@
 use std::{mem, slice};
 use wgpu::{
     util::DeviceExt, BindGroup, Buffer, ColorTargetState, Device, Queue, RenderPass,
-    RenderPipeline, ShaderModule, Texture, TextureFormat,
+    RenderPipeline, ShaderModule, TextureFormat,
 };
 
-use crate::{Camera, CameraUniform};
-
-#[repr(C)]
-#[derive(Clone, Debug)]
-struct Vertex {
-    pos: [f32; 3],
-    tex_coords: [f32; 2],
-}
+use crate::{
+    core::{
+        model::{Material, Mesh, Model, ModelVertex, Vertex},
+        texture,
+    },
+    Camera, CameraUniform,
+};
 
 #[repr(C)]
 #[derive(Clone)]
@@ -35,13 +34,14 @@ impl Instance {
     }
 }
 
+pub trait Renderable {
+    fn prepare(&mut self, queue: &Queue, camera: Option<&Camera>, elapsed_time: f32);
+    fn render<'rpass>(&'rpass self, render_pass: &mut RenderPass<'rpass>);
+}
+
 pub struct Pentagon {
     camera_uniform: CameraUniform,
-    vertices: Vec<Vertex>,
-    indices: Vec<i32>,
     render_pipeline: RenderPipeline,
-    vertex_buffer: Buffer,
-    index_buffer: Buffer,
     diffuse_bind_group: BindGroup,
     camera_buffer: Buffer,
     camera_bind_group: BindGroup,
@@ -49,6 +49,7 @@ pub struct Pentagon {
     elapsed_time_bind_group: BindGroup,
     instance_buffer: Buffer,
     instances: Vec<Instance>,
+    model: Model,
 }
 
 impl Pentagon {
@@ -56,9 +57,14 @@ impl Pentagon {
         device: &Device,
         shader: &ShaderModule,
         swapchain_format: &TextureFormat,
-        diffuse_texture: &Texture,
         camera: &Camera,
+        queue: &Queue,
     ) -> Self {
+        let data = include_bytes!("../happy-tree.png").to_vec();
+
+        let diffuse_texture =
+            texture::Texture::from_bytes(device, queue, data, "happy-three.png").unwrap();
+
         let texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 entries: &[
@@ -85,23 +91,9 @@ impl Pentagon {
             });
 
         let vertex_buffers = [
+            ModelVertex::desc(),
             wgpu::VertexBufferLayout {
-                array_stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
-                step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: &[
-                    wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Float32x3,
-                        offset: 0,
-                        shader_location: 0,
-                    },
-                    wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Float32x2,
-                        offset: mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
-                        shader_location: 1,
-                    },
-                ],
-            },
-            wgpu::VertexBufferLayout {
+                // TODO: move out
                 array_stride: mem::size_of::<InstanceRaw>() as wgpu::BufferAddress,
                 step_mode: wgpu::VertexStepMode::Instance,
                 attributes: &[
@@ -130,6 +122,8 @@ impl Pentagon {
         ];
 
         let mut camera_uniform = CameraUniform::new();
+
+        let model = Pentagon::prepare_model(device, queue);
 
         camera_uniform.update_view_proj(&camera);
 
@@ -203,62 +197,9 @@ impl Pentagon {
             multisample: wgpu::MultisampleState::default(),
             multiview: None,
         });
-        // index buffer
-        //
 
-        let vertices = [
-            Vertex {
-                pos: [-0.0868241, 0.49240386, 0.0],
-                tex_coords: [0.4131759, 0.00759614],
-            }, // A
-            Vertex {
-                pos: [-0.49513406, 0.06958647, 0.0],
-                tex_coords: [0.0048659444, 0.43041354],
-            }, // B
-            Vertex {
-                pos: [-0.21918549, -0.44939706, 0.0],
-                tex_coords: [0.28081453, 0.949397],
-            }, // C
-            Vertex {
-                pos: [0.35966998, -0.3473291, 0.0],
-                tex_coords: [0.85967, 0.84732914],
-            }, // D
-            Vertex {
-                pos: [0.44147372, 0.2347359, 0.0],
-                tex_coords: [0.9414737, 0.2652641],
-            }, // E
-        ]
-        .to_vec();
-
-        let vertex_buffer_size = crate::next_copy_buffer_size(4096);
-        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Test vertex non initialized buffer"),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-            size: vertex_buffer_size,
-        });
-
-        let indices = [0, 1, 4, 1, 2, 4, 2, 3, 4].to_vec();
-
-        let index_buffer_size = crate::next_copy_buffer_size(4096);
-        let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Test indices non initialize buffer"),
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-            size: index_buffer_size,
-        });
-
-        let diffuse_texture_view =
-            diffuse_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let diffuse_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
+        let diffuse_texture_view = diffuse_texture.view;
+        let diffuse_sampler = diffuse_texture.sampler;
 
         let diffuse_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &texture_bind_group_layout,
@@ -334,11 +275,7 @@ impl Pentagon {
 
         Pentagon {
             camera_uniform,
-            vertices,
-            indices,
             render_pipeline,
-            vertex_buffer,
-            index_buffer,
             diffuse_bind_group,
             camera_bind_group,
             camera_buffer,
@@ -346,63 +283,8 @@ impl Pentagon {
             elapsed_time_bind_group,
             instances,
             instance_buffer,
+            model,
         }
-    }
-
-    pub fn prepare(&mut self, queue: &Queue, camera: Option<&Camera>, elapsed_time: f32) {
-        let vertices_raw = unsafe {
-            slice::from_raw_parts(
-                self.vertices.as_ptr() as *const u8,
-                mem::size_of::<Vertex>() * self.vertices.len(),
-            )
-        };
-
-        let indices_raw = unsafe {
-            slice::from_raw_parts(
-                self.indices.as_slice() as *const _ as *const u8,
-                mem::size_of::<Vertex>() * self.indices.len(),
-            )
-        };
-
-        match camera {
-            Some(camera) => {
-                let _ = &self.camera_uniform.update_view_proj(camera);
-
-                let camera_raw = unsafe {
-                    slice::from_raw_parts(
-                        self.camera_uniform.view_proj.as_ptr() as *const u8,
-                        mem::size_of::<CameraUniform>(),
-                    )
-                };
-
-                queue.write_buffer(&self.camera_buffer, 0, camera_raw);
-            }
-            _ => {}
-        }
-
-        // TODO: elapsed writing
-        queue.write_buffer(&self.elapsed_time_buffer, 0, &elapsed_time.to_ne_bytes());
-
-        queue.write_buffer(&self.vertex_buffer, 0, vertices_raw);
-        queue.write_buffer(&self.index_buffer, 0, indices_raw);
-    }
-
-    pub fn render<'rpass>(&'rpass self, render_pass: &mut RenderPass<'rpass>) {
-        render_pass.set_pipeline(&self.render_pipeline);
-        render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
-
-        render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
-
-        render_pass.set_bind_group(2, &self.elapsed_time_bind_group, &[]);
-
-        render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-        render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-        render_pass.draw_indexed(
-            0..self.indices.len() as u32,
-            0,
-            0..self.instances.len() as _,
-        );
     }
 
     fn create_instances(num_row_instances: usize) -> Vec<Instance> {
@@ -440,5 +322,173 @@ impl Pentagon {
                 })
             })
             .collect()
+    }
+}
+
+impl Renderable for Pentagon {
+    fn prepare(&mut self, queue: &Queue, camera: Option<&Camera>, elapsed_time: f32) {
+        // let vertices_raw = unsafe {
+        //     slice::from_raw_parts(
+        //         self.vertices.as_ptr() as *const u8,
+        //         mem::size_of::<ModelVertex>() * self.vertices.len(),
+        //     )
+        // };
+
+        // let indices_raw = unsafe {
+        //     slice::from_raw_parts(
+        //         self.indices.as_slice() as *const _ as *const u8,
+        //         mem::size_of::<ModelVertex>() * self.indices.len(),
+        //     )
+        // };
+
+        match camera {
+            Some(camera) => {
+                let _ = &self.camera_uniform.update_view_proj(camera);
+
+                let camera_raw = unsafe {
+                    slice::from_raw_parts(
+                        self.camera_uniform.view_proj.as_ptr() as *const u8,
+                        mem::size_of::<CameraUniform>(),
+                    )
+                };
+
+                queue.write_buffer(&self.camera_buffer, 0, camera_raw);
+            }
+            _ => {}
+        }
+
+        // TODO: elapsed writing
+        queue.write_buffer(&self.elapsed_time_buffer, 0, &elapsed_time.to_ne_bytes());
+
+        // queue.write_buffer(&self.vertex_buffer, 0, vertices_raw);
+        // queue.write_buffer(&self.index_buffer, 0, indices_raw);
+    }
+
+    fn render<'rpass>(&'rpass self, render_pass: &mut RenderPass<'rpass>) {
+        render_pass.set_pipeline(&self.render_pipeline);
+        render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
+
+        render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
+
+        render_pass.set_bind_group(2, &self.elapsed_time_bind_group, &[]);
+
+        render_pass.set_vertex_buffer(0, self.model.meshes[0].vertex_buffer.slice(..));
+        render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+        render_pass.set_index_buffer(
+            self.model.meshes[0].index_buffer.slice(..),
+            wgpu::IndexFormat::Uint32,
+        );
+        render_pass.draw_indexed(
+            0..self.model.meshes[0].num_elements,
+            0,
+            0..self.instances.len() as _,
+        );
+    }
+}
+
+impl Pentagon {
+    fn prepare_model(device: &wgpu::Device, queue: &wgpu::Queue) -> Model {
+        let data = include_bytes!("../happy-tree.png").to_vec();
+
+        let diffuse_texture =
+            texture::Texture::from_bytes(device, queue, data, "happy-three.png").unwrap();
+
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        // This should match the filterable field of the
+                        // corresponding Texture entry above.
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+                label: Some("texture_bind_group_layout"),
+            });
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&diffuse_texture.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&diffuse_texture.sampler),
+                },
+            ],
+            label: None,
+        });
+
+        let mut materials = Vec::with_capacity(1);
+
+        materials.push(Material {
+            name: String::from("happy-three.png"),
+            diffuse_texture,
+            bind_group,
+        });
+
+        let vertices = [
+            ModelVertex {
+                pos: [-0.0868241, 0.49240386, 0.0],
+                tex_coords: [0.4131759, 0.00759614],
+            }, // A
+            ModelVertex {
+                pos: [-0.49513406, 0.06958647, 0.0],
+                tex_coords: [0.0048659444, 0.43041354],
+            }, // B
+            ModelVertex {
+                pos: [-0.21918549, -0.44939706, 0.0],
+                tex_coords: [0.28081453, 0.949397],
+            }, // C
+            ModelVertex {
+                pos: [0.35966998, -0.3473291, 0.0],
+                tex_coords: [0.85967, 0.84732914],
+            }, // D
+            ModelVertex {
+                pos: [0.44147372, 0.2347359, 0.0],
+                tex_coords: [0.9414737, 0.2652641],
+            }, // E
+        ]
+        .to_vec();
+
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Pentagon vertex buffer"),
+            contents: bytemuck::cast_slice(&vertices),
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let indices = [0, 1, 4, 1, 2, 4, 2, 3, 4].to_vec();
+
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Pentagon index buffer"),
+            contents: bytemuck::cast_slice(&indices),
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let mut meshes = Vec::with_capacity(1);
+
+        meshes.push(Mesh {
+            name: String::from("pentagon"),
+            vertex_buffer,
+            index_buffer,
+            num_elements: indices.len() as u32,
+            materials: materials.len() as usize,
+        });
+
+        Model { meshes, materials }
     }
 }

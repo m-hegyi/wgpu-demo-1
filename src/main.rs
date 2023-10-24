@@ -7,10 +7,14 @@ use winit::{
     window::Window,
 };
 
-use crate::{components::pentagon::Pentagon, core::texture::Texture};
+use crate::{
+    components::pentagon::{Pentagon, Renderable},
+    core::texture::Texture,
+};
 
 mod components;
 mod core;
+mod resources;
 
 #[rustfmt::skip]
 pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
@@ -93,16 +97,6 @@ impl CameraUniform {
 }
 
 async fn run(event_loop: EventLoop<()>, window: Window) {
-    //
-    // LOAD IMAGE
-    //
-    let diffuse_bytes = include_bytes!("happy-tree.png");
-    let diffuse_image = image::load_from_memory(diffuse_bytes).unwrap();
-    let diffuse_rgba = diffuse_image.to_rgba8();
-
-    use image::GenericImageView;
-    let dimensions = diffuse_image.dimensions();
-
     let size = window.inner_size();
 
     let instance = wgpu::Instance::default();
@@ -142,32 +136,9 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     let swapchain_capabilities = surface.get_capabilities(&adapter);
     let swapchain_format = swapchain_capabilities.formats[0];
 
-    let texture_size = wgpu::Extent3d {
-        width: diffuse_image.width(),
-        height: diffuse_image.height(),
-        ..Default::default()
-    };
-
-    let diffuse_texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("Diffuse texture"),
-        size: texture_size,
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8UnormSrgb,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
-
     let mut camera = Camera::default();
 
-    let mut pentagon_model = Pentagon::new(
-        &device,
-        &shader,
-        &swapchain_format,
-        &diffuse_texture,
-        &camera,
-    );
+    let mut pentagon_model = Pentagon::new(&device, &shader, &swapchain_format, &camera, &queue);
 
     let texture_bind_group_layout =
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -216,22 +187,6 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     surface.configure(&device, &config);
 
     pentagon_model.prepare(&queue, None, 0.0);
-
-    queue.write_texture(
-        wgpu::ImageCopyTexture {
-            texture: &diffuse_texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        &diffuse_rgba,
-        wgpu::ImageDataLayout {
-            offset: 0,
-            bytes_per_row: Some(4 * dimensions.0),
-            rows_per_image: Some(dimensions.1),
-        },
-        texture_size,
-    );
 
     let now = SystemTime::now();
 
