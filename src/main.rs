@@ -1,4 +1,5 @@
 use cgmath::SquareMatrix;
+use components::cube::Cube;
 use std::{borrow::Cow, time::SystemTime};
 use wgpu::COPY_BUFFER_ALIGNMENT;
 use winit::{
@@ -140,6 +141,8 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
     let mut pentagon_model = Pentagon::new(&device, &shader, &swapchain_format, &camera, &queue);
 
+    let mut cube_model = Cube::new(&device, &shader, &swapchain_format, &camera, &queue).await;
+
     let texture_bind_group_layout =
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             entries: &[
@@ -188,6 +191,8 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
     pentagon_model.prepare(&queue, None, 0.0);
 
+    cube_model.prepare(&queue, None, 0.0);
+
     let now = SystemTime::now();
 
     event_loop.run(move |event, _, control_flow| {
@@ -221,6 +226,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 let elapsed_time: f32 = now.elapsed().unwrap().as_secs_f32();
 
                 pentagon_model.prepare(&queue, Some(&camera), elapsed_time);
+                cube_model.prepare(&queue, Some(&camera), elapsed_time);
                 let frame = surface
                     .get_current_texture()
                     .expect("Failed to acquire next swap chain texture");
@@ -250,6 +256,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                         }),
                     });
                     pentagon_model.render(&mut rpass);
+                    cube_model.render(&mut rpass);
                 }
 
                 queue.submit(Some(encoder.finish()));

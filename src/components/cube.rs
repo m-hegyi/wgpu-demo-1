@@ -1,16 +1,20 @@
 use std::{mem, slice};
+
 use wgpu::{
-    util::DeviceExt, BindGroup, Buffer, ColorTargetState, Device, Queue, RenderPass,
-    RenderPipeline, ShaderModule, TextureFormat,
+    util::DeviceExt, BindGroup, BindGroupLayout, Buffer, ColorTargetState, Queue, RenderPipeline,
+    ShaderModule, TextureFormat,
 };
 
 use crate::{
     core::{
-        model::{Material, Mesh, Model, ModelVertex, Vertex},
+        model::{Model, ModelVertex, Vertex},
         texture,
     },
+    resources::{load_model, load_texture},
     Camera, CameraUniform,
 };
+
+use super::pentagon::Renderable;
 
 #[repr(C)]
 #[derive(Clone)]
@@ -34,12 +38,7 @@ impl Instance {
     }
 }
 
-pub trait Renderable {
-    fn prepare(&mut self, queue: &Queue, camera: Option<&Camera>, elapsed_time: f32);
-    fn render<'rpass>(&'rpass self, render_pass: &mut RenderPass<'rpass>);
-}
-
-pub struct Pentagon {
+pub struct Cube {
     camera_uniform: CameraUniform,
     render_pipeline: RenderPipeline,
     diffuse_bind_group: BindGroup,
@@ -52,18 +51,17 @@ pub struct Pentagon {
     model: Model,
 }
 
-impl Pentagon {
-    pub fn new(
-        device: &Device,
+impl Cube {
+    pub async fn new(
+        device: &wgpu::Device,
         shader: &ShaderModule,
         swapchain_format: &TextureFormat,
         camera: &Camera,
         queue: &Queue,
     ) -> Self {
-        let data = include_bytes!("../happy-tree.png").to_vec();
-
-        let diffuse_texture =
-            texture::Texture::from_bytes(device, queue, data, "happy-three.png").unwrap();
+        let diffuse_texture = load_texture("cube-diffuse.jpg", &device, &queue)
+            .await
+            .unwrap();
 
         let texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -72,9 +70,9 @@ impl Pentagon {
                         binding: 0,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
                             sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
                         },
                         count: None,
                     },
@@ -123,11 +121,14 @@ impl Pentagon {
 
         let mut camera_uniform = CameraUniform::new();
 
-        let model = Pentagon::prepare_model(device, queue);
+        // load model
+        let model = load_model("cube.obj", device, queue, &texture_bind_group_layout)
+            .await
+            .unwrap();
 
         camera_uniform.update_view_proj(&camera);
 
-        let instances = Pentagon::create_instances(10);
+        let instances = Cube::create_instances(10);
 
         let camera_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -271,9 +272,7 @@ impl Pentagon {
             usage: wgpu::BufferUsages::VERTEX,
         });
 
-        // write queue
-
-        Pentagon {
+        Cube {
             camera_uniform,
             render_pipeline,
             diffuse_bind_group,
@@ -302,9 +301,9 @@ impl Pentagon {
             .flat_map(|z| {
                 (0..NUM_INSTANCES_PER_ROW).map(move |x| {
                     let position = cgmath::Vector3 {
-                        x: x as f32,
-                        y: 2.0,
-                        z: z as f32,
+                        x: (x * 3) as f32,
+                        y: -2.0,
+                        z: (z * 3) as f32,
                     } - INSTANCE_DISPLACEMENT;
 
                     let rotation = if position.is_zero() {
@@ -325,22 +324,8 @@ impl Pentagon {
     }
 }
 
-impl Renderable for Pentagon {
-    fn prepare(&mut self, queue: &Queue, camera: Option<&Camera>, elapsed_time: f32) {
-        // let vertices_raw = unsafe {
-        //     slice::from_raw_parts(
-        //         self.vertices.as_ptr() as *const u8,
-        //         mem::size_of::<ModelVertex>() * self.vertices.len(),
-        //     )
-        // };
-
-        // let indices_raw = unsafe {
-        //     slice::from_raw_parts(
-        //         self.indices.as_slice() as *const _ as *const u8,
-        //         mem::size_of::<ModelVertex>() * self.indices.len(),
-        //     )
-        // };
-
+impl Renderable for Cube {
+    fn prepare(&mut self, queue: &wgpu::Queue, camera: Option<&crate::Camera>, elapsed_time: f32) {
         match camera {
             Some(camera) => {
                 let _ = &self.camera_uniform.update_view_proj(camera);
@@ -359,12 +344,9 @@ impl Renderable for Pentagon {
 
         // TODO: elapsed writing
         queue.write_buffer(&self.elapsed_time_buffer, 0, &elapsed_time.to_ne_bytes());
-
-        // queue.write_buffer(&self.vertex_buffer, 0, vertices_raw);
-        // queue.write_buffer(&self.index_buffer, 0, indices_raw);
     }
 
-    fn render<'rpass>(&'rpass self, render_pass: &mut RenderPass<'rpass>) {
+    fn render<'rpass>(&'rpass self, render_pass: &mut wgpu::RenderPass<'rpass>) {
         render_pass.set_pipeline(&self.render_pipeline);
         render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
 
@@ -378,112 +360,5 @@ impl Renderable for Pentagon {
             render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..mesh.num_elements, 0, 0..self.instances.len() as _);
         }
-    }
-}
-
-impl Pentagon {
-    fn prepare_model(device: &wgpu::Device, queue: &wgpu::Queue) -> Model {
-        let data = include_bytes!("../happy-tree.png").to_vec();
-
-        let diffuse_texture =
-            texture::Texture::from_bytes(device, queue, data, "happy-three.png").unwrap();
-
-        let texture_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        // This should match the filterable field of the
-                        // corresponding Texture entry above.
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-                label: Some("texture_bind_group_layout"),
-            });
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&diffuse_texture.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&diffuse_texture.sampler),
-                },
-            ],
-            label: None,
-        });
-
-        let mut materials = Vec::with_capacity(1);
-
-        materials.push(Material {
-            name: String::from("happy-three.png"),
-            diffuse_texture,
-            bind_group,
-        });
-
-        let vertices = [
-            ModelVertex {
-                pos: [-0.0868241, 0.49240386, 0.0],
-                tex_coords: [0.4131759, 0.00759614],
-            }, // A
-            ModelVertex {
-                pos: [-0.49513406, 0.06958647, 0.0],
-                tex_coords: [0.0048659444, 0.43041354],
-            }, // B
-            ModelVertex {
-                pos: [-0.21918549, -0.44939706, 0.0],
-                tex_coords: [0.28081453, 0.949397],
-            }, // C
-            ModelVertex {
-                pos: [0.35966998, -0.3473291, 0.0],
-                tex_coords: [0.85967, 0.84732914],
-            }, // D
-            ModelVertex {
-                pos: [0.44147372, 0.2347359, 0.0],
-                tex_coords: [0.9414737, 0.2652641],
-            }, // E
-        ]
-        .to_vec();
-
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Pentagon vertex buffer"),
-            contents: bytemuck::cast_slice(&vertices),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let indices = [0, 1, 4, 1, 2, 4, 2, 3, 4].to_vec();
-
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Pentagon index buffer"),
-            contents: bytemuck::cast_slice(&indices),
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let mut meshes = Vec::with_capacity(1);
-
-        meshes.push(Mesh {
-            name: String::from("pentagon"),
-            vertex_buffer,
-            index_buffer,
-            num_elements: indices.len() as u32,
-            materials: materials.len() as usize,
-        });
-
-        Model { meshes, materials }
     }
 }
