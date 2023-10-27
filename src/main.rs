@@ -9,7 +9,10 @@ use winit::{
 };
 
 use crate::{
-    components::pentagon::{Pentagon, Renderable},
+    components::{
+        pentagon::{Pentagon, Renderable},
+        text::Text,
+    },
     core::texture::Texture,
 };
 
@@ -193,7 +196,21 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
     cube_model.prepare(&queue, None, 0.0);
 
+    let mut hello_text = Text::new(&device, &queue, swapchain_format);
+
+    hello_text.buffer.set_size(
+        &mut hello_text.font_system,
+        config.width as f32,
+        config.height as f32,
+    );
+    hello_text.set_text("Hello world! 👋\nThis is rendered with 🦅 glyphon 🦁\nThe text below should be partially clipped.\na b c d e f g h i j k l m n o p q r s t u v w x y z");
+    hello_text
+        .buffer
+        .shape_until_scroll(&mut hello_text.font_system);
+
     let now = SystemTime::now();
+
+    let mut shift_pressed = false;
 
     event_loop.run(move |event, _, control_flow| {
         // Have the closure take ownership of the resources.
@@ -227,6 +244,16 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
                 pentagon_model.prepare(&queue, Some(&camera), elapsed_time);
                 cube_model.prepare(&queue, Some(&camera), elapsed_time);
+
+                hello_text.prepare(
+                    &device,
+                    &queue,
+                    glyphon::Resolution {
+                        width: size.width,
+                        height: size.height,
+                    },
+                );
+
                 let frame = surface
                     .get_current_texture()
                     .expect("Failed to acquire next swap chain texture");
@@ -257,6 +284,22 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                     });
                     pentagon_model.render(&mut rpass);
                     cube_model.render(&mut rpass);
+                }
+
+                {
+                    let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: None,
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: true,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                    });
+                    hello_text.render(&mut rpass);
                 }
 
                 queue.submit(Some(encoder.finish()));
