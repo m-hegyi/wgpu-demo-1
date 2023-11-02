@@ -12,12 +12,22 @@ impl Texture {
         queue: &wgpu::Queue,
         data: Vec<u8>,
         file_name: &str,
+        raw: Option<image::ImageBuffer<image::Rgba<u8>, Vec<u8>>>,
+        sampler: wgpu::Sampler,
     ) -> anyhow::Result<Self> {
-        let img = image::load_from_memory(&data).unwrap();
-        let data = img.to_rgba8();
+        let mut tmp_data;
 
-        use image::GenericImageView;
-        let dimensions = img.dimensions();
+        match raw {
+            Some(info) => {
+                tmp_data = info;
+            }
+            _ => {
+                let img = image::load_from_memory(&data).unwrap();
+                tmp_data = img.to_rgba8();
+            }
+        }
+
+        let dimensions = tmp_data.dimensions();
 
         let size = wgpu::Extent3d {
             width: dimensions.0,
@@ -38,16 +48,6 @@ impl Texture {
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
-
         queue.write_texture(
             wgpu::ImageCopyTexture {
                 texture: &texture,
@@ -55,7 +55,7 @@ impl Texture {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            &data,
+            &tmp_data,
             wgpu::ImageDataLayout {
                 offset: 0,
                 bytes_per_row: Some(4 * dimensions.0),
@@ -113,10 +113,6 @@ impl Texture {
         }
     }
 
-    pub fn get_texture(&self) -> &wgpu::Texture {
-        &self.texture
-    }
-
     pub fn get_view(&self) -> &wgpu::TextureView {
         &self.view
     }
@@ -125,5 +121,20 @@ impl Texture {
         self.texture = new_texture.texture;
         self.view = new_texture.view;
         self.sampler = new_texture.sampler;
+    }
+
+    pub fn create_sampler(
+        device: &wgpu::Device,
+        mag_filter: Option<wgpu::FilterMode>,
+    ) -> wgpu::Sampler {
+        device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: mag_filter.unwrap_or(wgpu::FilterMode::Linear), // TODO: make it changeable
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        })
     }
 }

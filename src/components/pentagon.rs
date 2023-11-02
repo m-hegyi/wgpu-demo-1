@@ -62,8 +62,15 @@ impl Pentagon {
     ) -> Self {
         let data = include_bytes!("../happy-tree.png").to_vec();
 
-        let diffuse_texture =
-            texture::Texture::from_bytes(device, queue, data, "happy-three.png").unwrap();
+        let diffuse_texture = texture::Texture::from_bytes(
+            device,
+            queue,
+            data,
+            "happy-three.png",
+            None,
+            texture::Texture::create_sampler(device, None),
+        )
+        .unwrap();
 
         let texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -385,8 +392,15 @@ impl Pentagon {
     fn prepare_model(device: &wgpu::Device, queue: &wgpu::Queue) -> Model {
         let data = include_bytes!("../happy-tree.png").to_vec();
 
-        let diffuse_texture =
-            texture::Texture::from_bytes(device, queue, data, "happy-three.png").unwrap();
+        let diffuse_texture = texture::Texture::from_bytes(
+            device,
+            queue,
+            data,
+            "happy-three.png",
+            None,
+            texture::Texture::create_sampler(device, None),
+        )
+        .unwrap();
 
         let texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

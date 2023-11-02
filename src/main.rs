@@ -1,8 +1,8 @@
 use cgmath::SquareMatrix;
-use components::cube::Cube;
+use components::{char::Char, cube::Cube};
 use std::{borrow::Cow, time::SystemTime};
 use winit::{
-    event::{ElementState, Event, KeyEvent, WindowEvent},
+    event::{Event, KeyEvent, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
     window::Window,
@@ -143,6 +143,11 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
     let mut cube_model = Cube::new(&device, &shader, &swapchain_format, &camera, &queue).await;
 
+    let texture_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: None,
+        source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("texture.wgsl"))),
+    });
+
     let texture_bind_group_layout =
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             entries: &[
@@ -187,11 +192,22 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     let mut depth_texture: Texture =
         Texture::create_depth_texture(&device, &config, "Depth Texture");
 
+    let mut char = Char::new(
+        &device,
+        &queue,
+        &texture_shader,
+        &pipeline_layout,
+        &texture_bind_group_layout,
+        &config,
+    );
+
     surface.configure(&device, &config);
 
     pentagon_model.prepare(&queue, None, 0.0);
 
     cube_model.prepare(&queue, None, 0.0);
+
+    char.prepare(&queue, None, 0.0);
 
     // let mut hello_text = Text::new(&device, &queue, swapchain_format);
 
@@ -211,7 +227,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
     event_loop.set_control_flow(ControlFlow::Poll);
 
-    event_loop.run(move |event, elwt| {
+    let _ = event_loop.run(move |event, elwt| {
         // Have the closure take ownership of the resources.
         // `event_loop.run` never returns, therefore we must do this to ensure
         // the resources are properly cleaned up.
@@ -304,6 +320,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                         timestamp_writes: None,
                         occlusion_query_set: None,
                     });
+                    char.render(&mut rpass);
                     // hello_text.render(&mut rpass);
                 }
 

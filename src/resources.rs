@@ -32,7 +32,14 @@ pub async fn load_texture(
 ) -> anyhow::Result<texture::Texture> {
     let data = load_binary(file_name).await?;
 
-    texture::Texture::from_bytes(device, queue, data, file_name)
+    texture::Texture::from_bytes(
+        device,
+        queue,
+        data,
+        file_name,
+        None,
+        texture::Texture::create_sampler(device, None),
+    )
 }
 
 pub async fn load_model(
